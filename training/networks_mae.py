@@ -227,7 +227,6 @@ class MAEResNet(nn.Module):
         )
         return loss.mean(), metrics
 
-    @torch.no_grad()
     def _process_feat(self, out, name, feat, patch_mean_size, patch_std_size, use_mean, use_std):
         B, C, H, W = feat.shape
         out[name] = feat.reshape(B, C, H * W).transpose(1, 2)  # [B, H*W, C]

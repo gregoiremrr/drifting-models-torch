@@ -123,6 +123,41 @@ class PowerFunctionEMA:
             ema.load_state_dict(s_ema)
 
 #----------------------------------------------------------------------------
+# Class for tracking a single fixed-decay (constant beta) EMA during training,
+# matching the reference JAX setup (one exponential EMA with `decay` applied per
+# optimizer step, independent of batch size).
+
+class FixedDecayEMA:
+    @torch.no_grad()
+    def __init__(self, model, decay=0.999):
+        self.model = model
+        self.decay = float(decay)
+        self.ema = copy.deepcopy(model)
+
+    @torch.no_grad()
+    def reset(self):
+        for p_model, p_ema in zip(self.model.parameters(), self.ema.parameters()):
+            p_ema.copy_(p_model)
+
+    @torch.no_grad()
+    def update(self, cur_nimg, batch_size):
+        # Constant per-step decay (cur_nimg / batch_size are ignored on purpose).
+        for p_model, p_ema in zip(self.model.parameters(), self.ema.parameters()):
+            p_ema.lerp_(p_model, 1 - self.decay)
+
+    @torch.no_grad()
+    def get(self):
+        for p_model, p_ema in zip(self.model.buffers(), self.ema.buffers()):
+            p_ema.copy_(p_model)
+        return self.ema
+
+    def state_dict(self):
+        return self.ema.state_dict()
+
+    def load_state_dict(self, state):
+        self.ema.load_state_dict(state)
+
+#----------------------------------------------------------------------------
 # Class for tracking traditional EMA during training.
 
 class TraditionalEMA:

@@ -37,7 +37,7 @@ def _wait_for_path(path, timeout=300, interval=0.1):
 dataset_presets = {
     'cifar10': dnnlib.EasyDict(
         resolution=32,
-        phema_stds=[0.050, 0.100, 0.200],
+        ema_decay=0.999,      # Single exponential EMA decay (constant per-step beta), matching the JAX reference.
         net_kwargs=dnnlib.EasyDict(
             patch_size=2,
             hidden_size=384,
@@ -86,15 +86,15 @@ config_presets = {
     'drift-cifar10': dnnlib.EasyDict(
         **_common_cifar,
         total_steps=50_000,
-        labels_per_step=8,     # Nc per rank
-        gen_per_label=64,       # Nneg / generated samples per label
+        labels_per_step=8,       # Nc per rank
+        gen_per_label=64,        # Nneg / generated samples per label
         pos_per_sample=256,      # Npos
-        neg_per_sample=64,      # Nuncond (CFG negatives)
-        old_per_sample=256,     # Cached generated negatives drawn per label; <=0 disables.
+        neg_per_sample=64,       # Nuncond (CFG negatives)
+        old_per_sample=256,      # Cached generated negatives drawn per label; <=0 disables.
         positive_bank_size=1024,
         negative_bank_size=1000,
-        old_bank_size=1024,     # Per-class queue of cached generated negatives; <=0 disables.
-        cfg_preserve_old=True,  # Count old-gen negatives into q-side so CFG strength is preserved.
+        old_bank_size=256,       # Per-class queue of cached generated negatives; <=0 disables.
+        cfg_preserve_old=True,   # Count old-gen negatives into q-side so CFG strength is preserved.
         push_per_step=256,
         push_at_resume=8,
     ),
@@ -179,7 +179,7 @@ def setup_training_config(preset='drift-cifar10', **opts):
                                          betas=tuple(opts.adam_betas), eps=1e-8, weight_decay=opts.weight_decay)
     c.lr_kwargs = dnnlib.EasyDict(**opts.lr_scheduler_kwargs, base_lr=opts.lr,
                                   total_nimg=total_nimg, warmup_nimg=warmup_nimg)
-    c.ema_kwargs = dict(class_name='training.phema.PowerFunctionEMA', stds=list(opts.phema_stds))
+    c.ema_kwargs = dict(class_name='training.phema.FixedDecayEMA', decay=opts.ema_decay)
     c.sampler_kwargs = dnnlib.EasyDict(**opts.sampler_kwargs)
     c.max_clip_norm = opts.max_clip_norm
 
@@ -285,6 +285,7 @@ def parse_nimg(s):
 @click.option('--old-per-sample',   help='Cached generated negatives drawn per label; <=0/unset disables', metavar='INT', type=int, default=None)
 @click.option('--cfg-preserve-old', help='Count old-gen negatives into the q-side so CFG strength is preserved', metavar='BOOL', type=bool, default=None)
 @click.option('--lr',               help='Learning rate', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True), default=None)
+@click.option('--ema-decay',        help='Generator EMA decay (constant per-step beta)', metavar='FLOAT', type=click.FloatRange(min=0, max=1, min_open=True), default=None)
 @click.option('--max-clip-norm',    help='Max gradient norm', metavar='FLOAT', type=click.FloatRange(min=0), default=None)
 
 @click.option('--pin-memory',       help='Pinned dataloader memory', metavar='BOOL', default=True, show_default=True)

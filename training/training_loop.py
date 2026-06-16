@@ -41,7 +41,15 @@ def _load_feature_encoder(mae_pkl, device):
     with open(mae_pkl, 'rb') as f:
         data = pickle.load(f)
     mae = data['ema'] if isinstance(data, dict) else data.ema
-    mae = mae.to(device).eval().requires_grad_(False)
+    # torch_utils.persistence pickles the MAE's source code, so the unpickled
+    # object's methods (notably get_activations) run the code as it was AT SAVE
+    # TIME. Rebuild from the *current* MAEResNet source and copy the trained
+    # weights over, so source edits (e.g. gradient flow through MAE features)
+    # actually take effect.
+    from training.networks_mae import MAEResNet
+    fresh = MAEResNet(*mae.init_args, **mae.init_kwargs)
+    misc.copy_params_and_buffers(mae, fresh, require_all=True)
+    mae = fresh.to(device).eval().requires_grad_(False)
     return mae
 
 #----------------------------------------------------------------------------

@@ -70,7 +70,10 @@ class DriftLoss:
     # -- feature extraction --------------------------------------------------
 
     def _features(self, feature_encoder, x):
-        out = {'global': x.reshape(x.shape[0], 1, -1)}
+        # Flatten in BHWC order to match the reference JAX layout. (Numerically a
+        # consistent permutation of the feature axis, which the drift loss is
+        # invariant to, but kept for 1:1 fidelity with the reference.)
+        out = {'global': x.permute(0, 2, 3, 1).reshape(x.shape[0], 1, -1)}
         if self.use_norm_x:
             out['norm_x'] = torch.sqrt((x ** 2).mean(dim=(2, 3)) + 1e-6)[:, None, :]
         if feature_encoder is not None:

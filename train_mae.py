@@ -52,7 +52,7 @@ config_presets = {
         adam_betas=(0.9, 0.95),
         max_clip_norm=2.0,
         mask_ratio=0.5,
-        ema_halflife_Mimg=0.5,
+        ema_decay=0.9995,     # Single exponential EMA decay (constant per-step beta), matching the JAX reference.
         finetune_last_steps=3_000,
         warmup_finetune_steps=1_000,
         finetune_cls=0.1,
@@ -67,7 +67,7 @@ config_presets = {
         adam_betas=(0.9, 0.95),
         max_clip_norm=2.0,
         mask_ratio=0.5,
-        ema_halflife_Mimg=0.1,
+        ema_decay=0.999,
         finetune_last_steps=10,
         warmup_finetune_steps=5,
         finetune_cls=0.1,
@@ -116,7 +116,7 @@ def setup_training_config(preset='mae-cifar10', **opts):
                                          betas=tuple(opts.adam_betas), eps=1e-8, weight_decay=opts.weight_decay)
     c.lr_kwargs = dnnlib.EasyDict(**opts.lr_scheduler_kwargs, base_lr=opts.lr,
                                   total_nimg=total_nimg, warmup_nimg=warmup_nimg)
-    c.ema_kwargs = dict(class_name='training.phema.TraditionalEMA', halflife_Mimg=opts.ema_halflife_Mimg)
+    c.ema_kwargs = dict(class_name='training.phema.FixedDecayEMA', decay=opts.ema_decay)
     c.max_clip_norm = opts.max_clip_norm
 
     c.batch_size = batch_size
@@ -158,6 +158,7 @@ def parse_nimg(s):
 @click.option('--batch-size',       help='Total batch size', metavar='INT', type=int, default=None)
 @click.option('--lr',               help='Learning rate', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True), default=None)
 @click.option('--mask-ratio',       help='Masking ratio', metavar='FLOAT', type=click.FloatRange(min=0, max=1), default=None)
+@click.option('--ema-decay',        help='MAE EMA decay (constant per-step beta)', metavar='FLOAT', type=click.FloatRange(min=0, max=1, min_open=True), default=None)
 
 @click.option('--max-batch-gpu',    help='Limit per-GPU batch', metavar='INT', type=int, default=None)
 @click.option('--pin-memory',       help='Pinned dataloader memory', metavar='BOOL', default=True, show_default=True)
