@@ -17,7 +17,6 @@ torchrun --standalone --nproc_per_node=4 train.py \
     --mae-pkl=training-runs/cifar10-mae/260605_155827_mae-cifar10/model-snapshot-0050331.pkl \
     --preset=drift-cifar10 \
     --no-fp16 \
-    --loss-microbatch-labels=2 \
     --status=1Mi \
     --snapshot=8Mi \
     --checkpoint=32Mi \

@@ -97,6 +97,7 @@ config_presets = {
         cfg_preserve_old=True,   # Count old-gen negatives into q-side so CFG strength is preserved.
         push_per_step=256,
         push_at_resume=8,
+        loss_microbatch_labels=2
     ),
     # Tiny preset for smoke tests / single-GPU debugging.
     'drift-cifar10-debug': dnnlib.EasyDict(
@@ -110,6 +111,7 @@ config_presets = {
         negative_bank_size=128,
         push_per_step=64,
         push_at_resume=2,
+        loss_microbatch_labels=2
     ),
 }
 
