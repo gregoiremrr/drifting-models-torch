@@ -53,7 +53,8 @@ def log_to_wandb(
     log_dict = {
         'trainer/training_steps': cur_step,
         'trainer/nimgs': cur_nimg,
-        'trainer/time': elapsed_time,
+        # `elapsed_time` is in seconds; expose the W&B time x-axis in hours.
+        'trainer/time': elapsed_time / 3600.0,
     }
     for k, v in (main_metrics or {}).items():
         for axis in _X_AXES:

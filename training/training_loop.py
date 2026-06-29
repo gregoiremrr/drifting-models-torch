@@ -112,6 +112,11 @@ def training_loop(
         assert metrics_kwargs is not None and metrics_kwargs.get('ref_path'), \
             '--metrics requires --metric-ref to be set'
 
+    world_size = dist.get_world_size()
+    gen_per_label = batch_size // (labels_per_step * world_size)
+    dist.print0(f'Batch size: total {batch_size} '
+                f'({labels_per_step} labels/rank x {gen_per_label} gen/label x {world_size} GPUs)')
+
     # Dataset and encoder.
     dist.print0('Loading dataset...')
     dataset_obj = dnnlib.util.construct_class_by_name(**dataset_kwargs)
@@ -272,7 +277,19 @@ def training_loop(
                     ema_model = ema_model[0][0]
                 ema_model.eval()
                 metric_start = time.time()
-                dist.print0(f"Computing metrics ({', '.join(metrics_kwargs['metrics'])})...")
+                # Distinguish per-metric sample budgets in the log line.
+                metric_names = list(metrics_kwargs['metrics'])
+                fid_n = metrics_kwargs['num_samples']
+                mind_n = metrics_kwargs.get('mind_num_samples', 5000)
+                has_frechet = any(m in ('fid', 'fd_dinov2') for m in metric_names)
+                has_mind = any(m in ('mind', 'mind_dinov2') for m in metric_names)
+                samples_desc = []
+                if has_frechet:
+                    samples_desc.append(f'{fid_n} for FID/FD-DINOv2')
+                if has_mind:
+                    samples_desc.append(f'{mind_n} for MIND')
+                dist.print0(f'Computing metrics ({", ".join(metric_names)}) on '
+                            + ', '.join(samples_desc) + ' samples...')
                 metric_results = evaluation.compute_metrics(
                     model=ema_model, encoder=encoder, sampler_kwargs=sampler_kwargs,
                     ref_path=metrics_kwargs['ref_path'], num_samples=metrics_kwargs['num_samples'],
@@ -293,7 +310,7 @@ def training_loop(
                 prev_status_time = time.time()
 
         # ---- Save snapshot. ----
-        if snapshot_nimg is not None and state.cur_nimg % snapshot_nimg == 0 and (state.cur_nimg != start_nimg or start_nimg == 0) and dist.get_rank() == 0:
+        if snapshot_nimg is not None and state.cur_nimg % snapshot_nimg == 0 and state.cur_nimg != start_nimg and dist.get_rank() == 0:
             ema_list = ema.get() if ema is not None else model
             ema_list = ema_list if isinstance(ema_list, list) else [(ema_list, '')]
             for ema_model, ema_suffix in ema_list:

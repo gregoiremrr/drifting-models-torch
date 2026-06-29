@@ -10,6 +10,6 @@ torchrun --standalone --nproc_per_node=4 train.py \
     --mae-pkl=training-runs/cifar10-mae/<run-dir>/model-snapshot-<latest>.pkl \
     --preset=drift-cifar10 \
     --no-fp16 \
-    --status=1Mi \
-    --snapshot=8Mi \
-    --checkpoint=32Mi
+    --status=512 \
+    --snapshot=4Ki \
+    --checkpoint=16Ki

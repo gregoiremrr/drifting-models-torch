@@ -76,7 +76,7 @@ _common_cifar = dict(
     no_cfg_frac=0.0,
     R_list=[0.02, 0.05, 0.2],
     lr=2e-4,
-    warmup_steps=5_000,
+    warmup_steps=3_000,   # Matches wflow-cifar10 (cost-equivalent budget: 50k steps / 3k warmup).
     weight_decay=0.01,
     max_clip_norm=2.0,
     adam_betas=(0.9, 0.95),
@@ -90,12 +90,12 @@ config_presets = {
         gen_per_label=64,        # Nneg / generated samples per label
         pos_per_sample=256,      # Npos
         neg_per_sample=64,       # Nuncond (CFG negatives)
-        old_per_sample=256,      # Cached generated negatives drawn per label; <=0 disables.
-        positive_bank_size=1024,
-        negative_bank_size=1000,
-        old_bank_size=256,       # Per-class queue of cached generated negatives; <=0 disables.
-        cfg_preserve_old=True,   # Count old-gen negatives into q-side so CFG strength is preserved.
-        push_per_step=256,
+        old_per_sample=0,        # Cached generated negatives drawn per label; <=0 disables.
+        positive_bank_size=128,
+        negative_bank_size=128,  # ~16-step neg-pool memory at push_per_step=8 (matches paper horizon).
+        old_bank_size=0,         # Per-class queue of cached generated negatives; <=0 disables.
+        cfg_preserve_old=False,  # Count old-gen negatives into q-side so CFG strength is preserved.
+        push_per_step=8,         # = labels_per_step (paper invariant); per-class pos horizon ~160 steps.
         push_at_resume=8,
         loss_microbatch_labels=2
     ),
@@ -164,7 +164,7 @@ def setup_training_config(preset='drift-cifar10', **opts):
         raise click.ClickException(f'--data: expected 3-channel pixel data, got {dataset_channels}')
 
     # Model.
-    c.model_kwargs = dnnlib.EasyDict(class_name='training.model.DriftingModel', use_fp16=opts.fp16, **opts.net_kwargs)
+    c.model_kwargs = dnnlib.EasyDict(class_name='training.model.DriftingModel', use_fp16=opts.fp16, use_bf16=opts.bf16, **opts.net_kwargs)
 
     # Loss.
     c.loss_kwargs = dnnlib.EasyDict(
@@ -205,13 +205,14 @@ def setup_training_config(preset='drift-cifar10', **opts):
     c.cudnn_benchmark = opts.bench
     c.force_finite = opts.force_finite
 
-    # I/O.
-    c.status_nimg = opts.status or None
-    c.snapshot_nimg = opts.snapshot or None
-    c.checkpoint_nimg = opts.checkpoint or None
+    # I/O. (Intervals are given in optimizer steps; the training loop works in
+    # image counts, so convert here -- 1 step == batch_size images.)
+    c.status_nimg = opts.status * batch_size if opts.status else None
+    c.snapshot_nimg = opts.snapshot * batch_size if opts.snapshot else None
+    c.checkpoint_nimg = opts.checkpoint * batch_size if opts.checkpoint else None
 
-    # Metrics.
-    c.metrics_nimg = opts.metrics or None
+    # Metrics. (Interval is given in optimizer steps.)
+    c.metrics_nimg = opts.metrics * batch_size if opts.metrics else None
     if c.metrics_nimg is not None:
         if not opts.metric_ref:
             raise click.ClickException('--metrics requires --metric-ref')
@@ -257,8 +258,10 @@ def launch_training(run_dir, c):
     training.training_loop.training_loop(run_dir=run_dir, **c)
 
 #----------------------------------------------------------------------------
+# Parse an integer (image count or optimizer-step count) with an optional
+# power-of-two suffix: 'Ki' = 2^10, 'Mi' = 2^20, 'Gi' = 2^30.
 
-def parse_nimg(s):
+def parse_count(s):
     if isinstance(s, int):
         return s
     if s.endswith('Ki'):
@@ -293,19 +296,20 @@ def parse_nimg(s):
 @click.option('--pin-memory',       help='Pinned dataloader memory', metavar='BOOL', default=True, show_default=True)
 @click.option('--num-workers',      help='Dataloader workers', metavar='INT', type=int, default=2, show_default=True)
 @click.option('--prefetch_factor',  help='Dataloader prefetch', metavar='INT', type=int, default=2, show_default=True)
-@click.option('--fp16/--no-fp16',   help='Mixed-precision generator', metavar='BOOL', default=False, show_default=True)
+@click.option('--fp16/--no-fp16',   help='fp16 mixed-precision generator (legacy, needs loss scaling)', metavar='BOOL', default=False, show_default=True)
+@click.option('--bf16/--no-bf16',   help='bf16 autocast generator (matmuls in bf16, norms/attn/loss stay fp32)', metavar='BOOL', default=True, show_default=True)
 @click.option('--ls',               help='Loss scaling', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True), default=1, show_default=True)
 @click.option('--bench',            help='cuDNN benchmarking', metavar='BOOL', type=bool, default=True, show_default=True)
 @click.option('--force-finite',     help='Zero NaN/Inf gradients', metavar='BOOL', type=bool, default=True, show_default=True)
 
-@click.option('--status',           help='Status print interval', metavar='NIMG', type=parse_nimg, default='1Mi', show_default=True)
-@click.option('--snapshot',         help='Snapshot interval', metavar='NIMG', type=parse_nimg, default='32Mi', show_default=True)
-@click.option('--checkpoint',       help='Checkpoint interval', metavar='NIMG', type=parse_nimg, default='128Mi', show_default=True)
+@click.option('--status',           help='Status print interval (optimizer steps)', metavar='STEPS', type=parse_count, default='512', show_default=True)
+@click.option('--snapshot',         help='Snapshot interval (optimizer steps)', metavar='STEPS', type=parse_count, default='16Ki', show_default=True)
+@click.option('--checkpoint',       help='Checkpoint interval (optimizer steps)', metavar='STEPS', type=parse_count, default='64Ki', show_default=True)
 
-@click.option('--metrics',          help='FID interval (disabled by default)', metavar='NIMG', type=parse_nimg, default=None, show_default=True)
-@click.option('--metric-names',     help='Metrics to compute', metavar='LIST', type=str, default='fid', show_default=True)
-@click.option('--metric-num-samples', help='# samples for Frechet metrics', metavar='INT', type=click.IntRange(min=2), default=10000, show_default=True)
-@click.option('--mind-num-samples', help='# samples for MIND metrics', metavar='INT', type=click.IntRange(min=2), default=5000, show_default=True)
+@click.option('--metrics',          help='Eval-metrics interval in optimizer steps (disabled by default)', metavar='STEPS', type=parse_count, default=None, show_default=True)
+@click.option('--metric-names',     help='Metrics to compute (fid, fd_dinov2, mind, mind_dinov2)', metavar='LIST', type=str, default='fid', show_default=True)
+@click.option('--metric-num-samples', help='# samples for Frechet metrics (fid, fd_dinov2)', metavar='INT', type=click.IntRange(min=2), default=10000, show_default=True)
+@click.option('--mind-num-samples', help='# samples for MIND metrics (mind, mind_dinov2)', metavar='INT', type=click.IntRange(min=2), default=5000, show_default=True)
 @click.option('--metric-ref',       help='Reference statistics', metavar='PATH', type=str, default='fid-refs/cifar10.pkl', show_default=True)
 @click.option('--metric-batch-size',help='Per-rank metric batch', metavar='INT', type=click.IntRange(min=1), default=64, show_default=True)
 
